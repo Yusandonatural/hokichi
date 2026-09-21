@@ -120,7 +120,7 @@
 
   map.on("load", async () => {
     try {
-      index = await (await fetch("data/index.json", { cache: "no-cache" })).json();
+      index = await (await fetch(`data/index.json?v=${Date.now()}`, { cache: "no-store" })).json();
     } catch (e) {
       el.summary.innerHTML = "<b>データがまだない</b><br>pipeline/build_web_data.py を実行して web/data/ を生成する。";
       return;
@@ -136,6 +136,7 @@
     renderSummary();
     const remembered = safeGet("hokichi.city");
     if (remembered && index.cities.some(c => c.code === remembered)) { el.city.value = remembered; loadCity(remembered); }
+    else if (index.cities.length === 1) { el.city.value = index.cities[0].code; loadCity(el.city.value); }
   });
 
   map.on("style.load", () => { if (index) { addDataLayers(); if (fc) map.getSource("parcels").setData(filtered()); } });
@@ -146,7 +147,7 @@
     activeId = null; el.detail.classList.add("hidden");
     if (!code) { fc = null; refresh(); map.flyTo({ center: NARA_CENTER, zoom: 9.3 }); return; }
     el.summary.innerHTML = "読込中…";
-    fc = await (await fetch(`data/${code}.geojson`, { cache: "no-cache" })).json();
+    fc = await (await fetch(`data/${code}.geojson?v=${encodeURIComponent(index.generated || "")}`, { cache: "no-cache" })).json();
     refresh();
     const c = index.cities.find(x => x.code === code);
     if (c && c.bbox) map.fitBounds([[c.bbox[0], c.bbox[1]], [c.bbox[2], c.bbox[3]]], { padding: 40, maxZoom: 14 });
@@ -173,20 +174,38 @@
     if (map.getSource("parcels")) map.getSource("parcels").setData(data);
     setCityLayerVisibility();
     renderSummary(data);
-    renderList(data);
+    if (el.city.value) renderList(data);   // 県全体のときは renderSummary が市町村一覧を出す
   }
 
   // ---------------------------------------------------------------- 描画
   function renderSummary(data) {
     if (!el.city.value) {
       const tot = index ? index.cities.reduce((s, c) => s + c.count, 0) : 0;
-      el.summary.innerHTML = `県内 <b>${index ? index.cities.length : 0}</b> 市町村 / 遊休農地 <b>${tot}</b> 筆。円をクリックで市町村へ。`;
-      el.list.innerHTML = "";
+      el.summary.innerHTML = `データのある市町村 <b>${index ? index.cities.length : 0}</b> / 遊休農地 <b>${tot}</b> 筆。市町村を選ぶと一覧と地図が出る。`;
+      renderCityIndex();
       return;
     }
     const n = data.features.length, ha = data.features.reduce((s, f) => s + (f.properties.area_sqm || 0), 0) / 1e4;
     const cl = new Set(data.features.map(f => f.properties.cluster_id)).size;
     el.summary.innerHTML = `表示 <b>${n}</b> 筆 / <b>${ha.toFixed(1)}</b> ha / 団地候補 <b>${cl}</b>（全 ${fc.features.length} 筆）`;
+  }
+
+  function renderCityIndex() {
+    el.list.innerHTML = "";
+    if (!index) return;
+    const cities = [...index.cities].sort((a, b) => b.count - a.count);
+    for (const c of cities) {
+      const row = document.createElement("div");
+      row.className = "item city-row";
+      row.innerHTML = `<span class="score" style="background:${scoreColor(c.max_score || 0)}">${c.max_score ?? "-"}</span>
+        <span><b>${esc(c.name)}</b> <span class="meta">${c.code}</span><br><span class="meta">遊休農地 ${c.count}筆 / ${c.area_ha}ha / 団地候補 ${c.clusters}${c.matched ? "" : " ・区画形状は推定"}</span></span>
+        <span class="meta">›</span>`;
+      row.addEventListener("click", () => { el.city.value = c.code; loadCity(c.code); });
+      el.list.appendChild(row);
+    }
+    if (!cities.length) {
+      el.list.innerHTML = '<div class="item"><span></span><span class="meta">まだデータがない。docs/07-Webサービス.md の手順で農地ナビのデータを data/emaff/ に置く。</span></div>';
+    }
   }
 
   function renderList(data) {
