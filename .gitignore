@@ -1,0 +1,13 @@
+# 出力物には候補地の地番が入る。個人情報に近づくため追跡しない。
+out/
+data/*.csv
+!data/sample/*.csv
+data/column_map.json
+
+# 登記・調査の実データを置く場所（絶対にコミットしない）
+private/
+*.pdf
+
+__pycache__/
+*.pyc
+.DS_Store

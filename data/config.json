@@ -1,0 +1,29 @@
+{
+  "_comment": "tools/hokichi.py の採点設定。--config data/config.json で読み込む。",
+  "target": {
+    "city_codes": [],
+    "_note": "対象を絞るなら市区町村コードを列挙する。例: [\"29212\"] は奈良県宇陀市"
+  },
+  "cluster_gap": 5,
+  "area": {
+    "unit": "sqm",
+    "_unit_note": "CSVの面積がアール表記なら \"a\" にする",
+    "ideal_min": 1000,
+    "ideal_max": 5000,
+    "hard_min": 300,
+    "hard_max": 30000
+  },
+  "weights": {
+    "idle": 25,
+    "intent_lend": 30,
+    "intent_self": -25,
+    "in_nouyouchi": 10,
+    "area_fit": 15,
+    "landuse_hata": 10,
+    "landuse_ta": -5,
+    "cluster": 25,
+    "bank_held": 12,
+    "owner_unknown": -8,
+    "urban": -15
+  }
+}
