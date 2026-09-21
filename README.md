@@ -39,10 +39,26 @@ templates/   そのまま使える様式
   自然栽培_転換計画書.md      地域調和要件への回答を兼ねる計画書
 tools/       eMAFF農地ナビのCSVを候補地リストに変換するCLI（Python標準ライブラリのみ）
   hokichi.py / README.md
-data/        設定ファイル（config.json）とサンプルデータ（data/sample/）
+pipeline/    筆ポリゴン取得と、地図UI用データのビルド（pyogrio / shapely）
+web/         地図UI（MapLibre GL JS・ビルド不要）。web/data/ は生成物
+worker/      Cloudflare Workers（Basic認証つき静的配信）。wrangler.toml が設定
+.github/     月次ビルド＋デプロイの Actions
+data/        設定ファイル（config.json）、サンプル（data/sample/）、eMAFF CSV置き場（data/emaff/）
 ```
 
-## いちばん短い使い方
+## Webサービス（社内向け地図）
+
+`web/` に、遊休農地を地図で見るサービスがある。eMAFF農地ナビのCSVと筆ポリゴンを
+`pipeline/` で結合し、Cloudflare Workers で Basic 認証つきで配信する。
+セットアップと運用は `docs/07-Webサービス.md`。
+
+```bash
+pip install -r pipeline/requirements.txt
+python3 pipeline/build_web_data.py --emaff data/sample --out web/data   # まずサンプルで
+python3 -m http.server -d web 8000                                       # http://localhost:8000
+```
+
+## いちばん短い使い方（CLIだけ）
 
 ```bash
 # 1. eMAFF農地ナビ (https://map.maff.go.jp/) で対象市町村を表示し、CSVをダウンロード

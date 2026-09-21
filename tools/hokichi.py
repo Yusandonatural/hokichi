@@ -44,6 +44,8 @@ COLUMN_HINTS = [
     ("bank",        ["農地中間管理権", "中間管理"]),
     ("right_type",  ["権利の種類", "権利種類"]),
     ("right_start", ["存続期間始期", "始期"]),
+    ("lat",         ["緯度", "latitude", "lat", "Y座標"]),
+    ("lon",         ["経度", "longitude", "lon", "lng", "X座標"]),
 ]
 
 ENCODINGS = ["utf-8-sig", "cp932", "utf-8", "euc_jp"]
@@ -197,6 +199,8 @@ class Parcel:
     owner_known: str = ""
     bank: str = ""
     right_type: str = ""
+    lat: float | None = None
+    lon: float | None = None
     cluster_id: str = ""
     cluster_size: int = 1
     cluster_area: float = 0.0
@@ -225,6 +229,7 @@ def build_parcels(rows, mapping, cfg):
             idle_intent=get("idle_intent"), intent_date=get("intent_date"),
             owner_known=get("owner_known"), bank=get("bank"),
             right_type=get("right_type"),
+            lat=to_float(get("lat")), lon=to_float(get("lon")),
         )
         codes = cfg["target"].get("city_codes") or []
         if codes and p.city_code and p.city_code not in [str(c) for c in codes]:
@@ -309,8 +314,8 @@ def score(parcels, cfg):
 CAND_COLUMNS = ["cid", "score", "city_code", "city", "place", "parcel_label",
                 "landuse", "area_sqm", "shinko", "toshi", "idle", "survey_date",
                 "owner_intent", "idle_intent", "intent_date", "owner_known",
-                "bank", "right_type", "cluster_id", "cluster_size",
-                "cluster_area", "reasons"]
+                "bank", "right_type", "lat", "lon", "cluster_id",
+                "cluster_size", "cluster_area", "reasons"]
 
 
 def write_candidates(parcels, path):
@@ -505,6 +510,13 @@ def load_override(path):
         return json.load(fh)
 
 
+def process_rows(rows, mapping, cfg):
+    """CSVの行 → 採点済み Parcel のリスト。CLI と pipeline/ の両方から使う。"""
+    parcels = build_parcels(rows, mapping, cfg)
+    parcels = cluster(parcels, cfg["cluster_gap"])
+    return score(parcels, cfg)
+
+
 def cmd_rank(args):
     cfg = load_config(args.config)
     rows, mapping = load_rows(args.csv, load_override(args.map))
@@ -514,9 +526,7 @@ def cmd_rank(args):
     if missing:
         print(f"警告: 列を認識できなかった: {missing}。inspect で確認を。", file=sys.stderr)
 
-    parcels = build_parcels(rows, mapping, cfg)
-    parcels = cluster(parcels, cfg["cluster_gap"])
-    parcels = score(parcels, cfg)
+    parcels = process_rows(rows, mapping, cfg)
     if args.min_score is not None:
         parcels = [p for p in parcels if p.score >= args.min_score]
 

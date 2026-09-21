@@ -1,0 +1,17 @@
+name = "hokichi"
+main = "worker/src/index.js"
+compatibility_date = "2025-09-01"
+
+# web/ を静的アセットとして配信する（web/data/ の GeoJSON も含む）
+[assets]
+directory = "./web"
+binding = "ASSETS"
+not_found_handling = "404-page"
+
+[vars]
+# "basic" = Worker 内の Basic 認証（既定）。"access" = Cloudflare Access に任せる
+AUTH_MODE = "basic"
+
+# 秘密情報は toml に書かない:
+#   npx wrangler secret put HOKICHI_USER
+#   npx wrangler secret put HOKICHI_PASSWORD
