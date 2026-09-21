@@ -29,7 +29,7 @@ data/fude/*.fgb   ──┘                                                     
 
 | データ | 取得 | 自動化 |
 |---|---|---|
-| 筆ポリゴン（区画形状） | 農林水産省の配布URLから県単位ZIP | **自動**（GitHub Actions が取得・キャッシュ） |
+| 筆ポリゴン（区画形状） | 農林水産省の配布URLから県単位ZIP | **初回だけ手動**（配布サーバーが Actions を拒否するため Release に添付。以後は自動） |
 | eMAFF農地ナビの公表情報（遊休農地フラグ・意向・緯度経度） | eMAFF農地ナビの画面からCSVダウンロード | **手動**（下記） |
 | 地理院タイル（背景地図・航空写真） | 国土地理院のタイル配信 | 自動（ブラウザが直接読む） |
 
@@ -48,16 +48,24 @@ data/fude/*.fgb   ──┘                                                     
 CSV は公表情報であり氏名を含まないので、リポジトリに置いてよい。
 ただし容量が大きくなるので、県全体をまとめる段階になったら Git LFS を検討する。
 
-### 筆ポリゴンの出典と更新
+### 筆ポリゴンの取得（初回だけ手動・年1回）
 
-`pipeline/fetch_fude.py` は次を取得する。
+農林水産省の配布サーバー（machimura.maff.go.jp）は **GitHub Actions からのアクセスを 403 で拒否する**
+（User-Agent や年度を変えても同じ。実測済み）。そのため初回だけブラウザで取得し、
+GitHub Release に添付する。以後は Actions が Release から取る。
 
-```
-https://www.machimura.maff.go.jp/shurakudata/2020/mb/MB0001_2025_2020_29.zip
-                                              └集落境界年 └公開年度 └県コード
-```
+1. ブラウザで次の URL を開いてダウンロードする（奈良県・2025年度公開・数百MB）
+   `https://www.machimura.maff.go.jp/shurakudata/2020/mb/MB0001_2025_2020_29.zip`
+   （開けない場合は https://open.fude.maff.go.jp/ から奈良県を選んでダウンロード）
+2. https://github.com/Yusandonatural/hokichi/releases/new を開く
+   - Tag: `fude-data`（既にあれば「Edit release」で同じタグに追加）
+   - Title: `筆ポリゴン 2025年度公開（奈良県）`
+   - Attach files にダウンロードした zip を **ファイル名を変えずに** ドラッグ
+   - 「Publish release」
+3. Actions の `pages-preview` を「Run workflow」で再実行
 
-年度が変わったら `.github/workflows/build-and-deploy.yml` の `FUDE_YEAR` を上げる。
+`pipeline/fetch_fude.py` は Release の zip → 配布サーバーの順に探す。
+年度が変わったら `.github/workflows/*.yml` の `FUDE_YEAR` を上げ、新しい zip を同じ Release に足す。
 利用条件は出典明記。画面の下部に「筆ポリゴンデータ（2025年度公開）」（農林水産省）を表示している。
 
 ## ローカルで動かす

@@ -51,14 +51,22 @@ def main():
     ap.add_argument("--rcom-year", type=int, default=2020, help="農業集落境界の年度")
     ap.add_argument("--out", default="data/fude")
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--release-repo", default=os.environ.get("GITHUB_REPOSITORY", "Yusandonatural/hokichi"),
+                    help="GitHub Release（タグ fude-data）に手動アップロードした zip を先に探す")
     a = ap.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
     url = URL.format(rcom=a.rcom_year, year=a.year, pref=a.pref)
     zpath = os.path.join(a.out, os.path.basename(url))
     if a.force or not os.path.exists(zpath):
-        # 配布サーバーは UA や年度でしばしば 403/404 を返す。UA と年度を順に試す
+        # 農水省の配布サーバーは GitHub Actions からのアクセスを 403 で拒否する。
+        # 手動でブラウザからダウンロードし、GitHub Release（タグ fude-data）に添付した
+        # zip を最優先で探し、無ければ配布サーバーを UA と年度を変えて試す。
         candidates = []
+        if a.release_repo:
+            for year in (a.year, a.year - 1):
+                name = os.path.basename(URL.format(rcom=a.rcom_year, year=year, pref=a.pref))
+                candidates.append((f"https://github.com/{a.release_repo}/releases/download/fude-data/{name}", UAS[-1]))
         for year in (a.year, a.year - 1):
             u = URL.format(rcom=a.rcom_year, year=year, pref=a.pref)
             for ua in UAS:
@@ -79,9 +87,10 @@ def main():
                 last = exc
                 print(f"  → {exc.reason}", file=sys.stderr)
         else:
-            raise SystemExit(f"筆ポリゴンを取得できなかった（最後のエラー: {last}）。"
-                             "手動で https://open.fude.maff.go.jp/ からダウンロードして "
-                             f"{a.out}/ に置くこと。")
+            raise SystemExit(
+                f"筆ポリゴンを取得できなかった（最後のエラー: {last}）。\n"
+                f"  ブラウザで {URL.format(rcom=a.rcom_year, year=a.year, pref=a.pref)} をダウンロードし、\n"
+                f"  GitHub Release（タグ fude-data）に添付するか、{a.out}/ に置くこと。docs/07-Webサービス.md を参照。")
     else:
         print(f"既存を使用: {zpath}", file=sys.stderr)
 

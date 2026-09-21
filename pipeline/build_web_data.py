@@ -74,7 +74,8 @@ def load_fude(fude_dir, city_code):
     if not HAVE_GEO:
         return None
     paths = sorted(glob.glob(os.path.join(fude_dir, "*.fgb")) +
-                   glob.glob(os.path.join(fude_dir, "*.geojson")))
+                   glob.glob(os.path.join(fude_dir, "*.geojson")) +
+                   glob.glob(os.path.join(fude_dir, "*.json")))
     if not paths:
         return None
     geoms, props = [], []
