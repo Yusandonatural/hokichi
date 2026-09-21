@@ -38,14 +38,21 @@ jobs:
 
       - name: 筆ポリゴンをキャッシュから復元
         id: fude-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: data/fude
-          key: fude-${{ env.PREF_CODE }}-${{ env.FUDE_YEAR }}-${{ env.FUDE_RCOM_YEAR }}
+          key: fude-v2-${{ env.PREF_CODE }}-${{ env.FUDE_YEAR }}-${{ env.FUDE_RCOM_YEAR }}
 
       - name: 筆ポリゴンを取得（農林水産省）
         if: steps.fude-cache.outputs.cache-hit != 'true'
         run: python3 pipeline/fetch_fude.py --pref "$PREF_CODE" --year "$FUDE_YEAR" --rcom-year "$FUDE_RCOM_YEAR" --out data/fude
+
+      - name: 筆ポリゴンをキャッシュに保存（取得できた時だけ）
+        if: steps.fude-cache.outputs.cache-hit != 'true' && hashFiles('data/fude/*.fgb', 'data/fude/*.geojson') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/fude
+          key: fude-v2-${{ env.PREF_CODE }}-${{ env.FUDE_YEAR }}-${{ env.FUDE_RCOM_YEAR }}
 
       - name: eMAFF CSV の有無を確認
         id: emaff
