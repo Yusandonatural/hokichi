@@ -138,7 +138,12 @@ def square_around(lat, lon, area_sqm):
 
 
 def load_fude(fude_dir, city_code):
-    """指定市区町村の筆ポリゴンを (STRtree, geoms, props) で返す。無ければ None。"""
+    """指定市区町村の筆ポリゴンを (STRtree, geoms, props) で返す。無ければ None。
+
+    配布形式によって市区町村を示す列が違う:
+      - 集落境界DB版 (MB0001_*.fgb): key = 都道府県2桁+市区町村3桁+集落コード
+      - 筆ポリゴン公開サイト版: local_government_cd
+    """
     if not HAVE_GEO:
         return None
     paths = sorted(glob.glob(os.path.join(fude_dir, "*.fgb")) +
@@ -149,22 +154,31 @@ def load_fude(fude_dir, city_code):
     geoms, props = [], []
     for path in paths:
         try:
-            meta, _idx, wkb, fields = pyogrio.raw.read(
-                path, where=f"local_government_cd LIKE '{city_code}%'")
-        except Exception as exc:  # 属性フィルタ非対応の形式は全件読んで絞る
-            print(f"  where句なしで再読込 ({exc.__class__.__name__}): {path}", file=sys.stderr)
+            names = list(pyogrio.read_info(path)["fields"])
+        except Exception as exc:
+            print(f"  読めない: {path} ({exc})", file=sys.stderr)
+            continue
+        code_col = "key" if "key" in names else ("local_government_cd" if "local_government_cd" in names else None)
+        wkb, fields = None, None
+        if code_col:
+            try:
+                meta, _idx, wkb, fields = pyogrio.raw.read(path, where=f"{code_col} LIKE '{city_code}%'")
+            except Exception as exc:
+                print(f"  where句なしで再読込 ({exc.__class__.__name__}): {path}", file=sys.stderr)
+        if wkb is None:
             meta, _idx, wkb, fields = pyogrio.raw.read(path)
         names = list(meta["fields"])
         cols = {n: fields[i] for i, n in enumerate(names)}
-        if "local_government_cd" in cols:
-            mask = np.array([norm_code(c) == city_code for c in cols["local_government_cd"]])
+        if code_col:
+            mask = np.array([str(c).startswith(city_code) for c in cols[code_col]])
         else:
             mask = np.ones(len(wkb), dtype=bool)
         if not mask.any():
             continue
         g = from_wkb(np.asarray(wkb, dtype=object)[mask])
         geoms.extend(g.tolist())
-        for j in np.nonzero(mask)[0]:
+        sel = np.nonzero(mask)[0]
+        for j in sel:
             props.append({
                 "fude_uuid": str(cols.get("polygon_uuid", [""] * len(wkb))[j]),
                 "land_type": str(cols.get("land_type", [""] * len(wkb))[j]),
@@ -172,17 +186,70 @@ def load_fude(fude_dir, city_code):
             })
     if not geoms:
         return None
+    print(f"  筆ポリゴン {len(geoms)} 区画", file=sys.stderr)
     return STRtree(geoms), geoms, props
+
+
+NEAR_M = 20.0   # ピンがこの距離以内なら「近傍一致」とみなす（ピンは登記簿由来の概ねの位置）
+
+
+def match_polygon(fude, lat, lon):
+    """(geom, props, kind, dist_m) を返す。kind: 'within' / 'near' / None。"""
+    if fude is None:
+        return None
+    tree, geoms, props = fude
+    pt = Point(lon, lat)
+    hits = tree.query(pt, predicate="within")
+    if len(hits):
+        j = int(hits[0])
+        return geoms[j], props[j], "within", 0.0
+    j = int(tree.nearest(pt))
+    dx = (geoms[j].distance(pt)) * 111_320.0 * math.cos(math.radians(lat))
+    dy = (geoms[j].distance(pt)) * 111_320.0
+    dist = min(dx, dy) if dx and dy else max(dx, dy)
+    if dist <= NEAR_M:
+        return geoms[j], props[j], "near", round(dist, 1)
+    return None
+
+
+def round_coords(obj, nd=6):
+    if isinstance(obj, (list, tuple)):
+        if obj and isinstance(obj[0], (int, float)):
+            return [round(float(v), nd) for v in obj]
+        return [round_coords(o, nd) for o in obj]
+    return obj
+
+
+def write_fude_context(fude, plist, path):
+    """ピンの範囲（＋約1km）にある筆ポリゴンを薄い背景レイヤ用に書き出す。"""
+    if fude is None or not plist:
+        return 0
+    tree, geoms, props = fude
+    lats = [p.lat for p in plist]; lons = [p.lon for p in plist]
+    m = 0.01
+    from shapely.geometry import box
+    hits = tree.query(box(min(lons) - m, min(lats) - m, max(lons) + m, max(lats) + m), predicate="intersects")
+    feats = []
+    for j in hits:
+        j = int(j)
+        geo = mapping(geoms[j])
+        geo["coordinates"] = round_coords(geo["coordinates"])
+        feats.append({"type": "Feature", "geometry": geo,
+                      "properties": {"u": props[j]["fude_uuid"][:8], "t": props[j]["land_type"]}})
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"type": "FeatureCollection", "features": feats}, fh, ensure_ascii=False, separators=(",", ":"))
+    return len(feats)
 
 
 def feature_for(p, match):
     if match is not None:
-        geom_obj, fprops = match
+        geom_obj, fprops, kind, dist = match
         geometry = mapping(geom_obj)
+        geometry["coordinates"] = round_coords(geometry["coordinates"])
         matched = True
     else:
         geometry = square_around(p.lat, p.lon, p.area_sqm)
-        fprops = {}
+        fprops, kind, dist = {}, "none", None
         matched = False
     return {
         "type": "Feature",
@@ -203,7 +270,7 @@ def feature_for(p, match):
             "lat": p.lat, "lon": p.lon,
             "owner_hash": p.owner_hash, "owner_group": p.owner_group,
             "daicho_id": p.daicho_id,
-            "matched": matched,
+            "matched": matched, "match_kind": kind, "match_dist_m": dist,
             "fude_uuid": fprops.get("fude_uuid", ""),
             "land_type": fprops.get("land_type", ""),
         },
@@ -212,10 +279,16 @@ def feature_for(p, match):
 
 def bbox_of(features):
     xs, ys = [], []
+
+    def walk(c):
+        if c and isinstance(c[0], (int, float)):
+            xs.append(c[0]); ys.append(c[1])
+        else:
+            for o in c:
+                walk(o)
+
     for f in features:
-        for ring in f["geometry"]["coordinates"]:
-            for x, y in ring:
-                xs.append(x); ys.append(y)
+        walk(f["geometry"]["coordinates"])
     return [min(xs), min(ys), max(xs), max(ys)] if xs else None
 
 
@@ -283,15 +356,11 @@ def main():
         matched = 0
         features = []
         for p in plist:
-            match = None
-            if fude is not None:
-                tree, geoms, props = fude
-                hits = tree.query(Point(p.lon, p.lat), predicate="within")
-                if len(hits):
-                    j = int(hits[0])
-                    match = (geoms[j], props[j])
-                    matched += 1
+            match = match_polygon(fude, p.lat, p.lon)
+            if match is not None:
+                matched += 1
             features.append(feature_for(p, match))
+        n_ctx = write_fude_context(fude, plist, os.path.join(a.out, f"{code}-fude.geojson"))
         fc = {"type": "FeatureCollection",
               "name": f"{name} 遊休農地", "features": features}
         with open(os.path.join(a.out, f"{code}.geojson"), "w", encoding="utf-8") as fh:
@@ -303,14 +372,17 @@ def main():
             "area_ha": round(sum(p.area_sqm or 0 for p in plist) / 10_000, 1),
             "bbox": bbox_of(features),
             "max_score": max(p.score for p in plist),
+            "fude_context": n_ctx,
         })
-        print(f"  {code} {name}: {len(plist)}筆 (ポリゴン一致 {matched})", file=sys.stderr)
+        print(f"  {code} {name}: {len(plist)}筆 (ポリゴン一致 {matched} / 背景の区画 {n_ctx})", file=sys.stderr)
 
     meta = {
         "generated": dt.date.today().isoformat(),
         "fude_used": any(c["matched"] for c in index),
         "attribution": {k: v.format(year=a.fude_year) for k, v in ATTRIBUTION.items()},
-        "note": "所有者の氏名は含まれない（農地台帳の公表事項に氏名は無い）。地番から登記で確認すること。",
+        "note": "所有者の氏名は含まれない（農地台帳の公表事項に氏名は無い）。地番から登記で確認すること。"
+                " 農地ナビのピンは登記簿由来の概ねの位置で、筆ポリゴン（衛星判読）とは数十m ずれることが多く、"
+                "荒廃した筆は筆ポリゴンに存在しないことがある。区画形状は参考。",
         "cities": index,
     }
     with open(os.path.join(a.out, "index.json"), "w", encoding="utf-8") as fh:

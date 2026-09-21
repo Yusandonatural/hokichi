@@ -15,7 +15,7 @@
   const el = {
     city: $("city"), minScore: $("minScore"), minScoreOut: $("minScoreOut"),
     lendOnly: $("lendOnly"), hideUnknown: $("hideUnknown"), landuse: $("landuse"),
-    basemap: $("basemap"), summary: $("summary"), list: $("list"), detail: $("detail"),
+    basemap: $("basemap"), showFude: $("showFude"), summary: $("summary"), list: $("list"), detail: $("detail"),
     attrib: $("attrib"), cartBtn: $("cartBtn"), cartCount: $("cartCount"),
     cart: $("cart"), cartTable: $("cartTable").querySelector("tbody"),
     cartCsv: $("cartCsv"), cartLetter: $("cartLetter"), cartClear: $("cartClear"),
@@ -24,6 +24,7 @@
 
   let index = null;          // index.json
   let fc = null;             // 現在の市町村の FeatureCollection
+  let fudeFC = null;         // 現在の市町村の筆ポリゴン（背景・参考）
   let activeId = null;
   let cart = loadCart();
 
@@ -51,11 +52,17 @@
 
   const legend = document.createElement("div");
   legend.className = "legend";
-  legend.innerHTML = '<i style="background:#1b7f4c"></i>90点以上 <i style="background:#8fbf3f"></i>70〜 <i style="background:#e6b422"></i>50〜 <i style="background:#c0504d"></i>〜50 ／ 破線＝区画形状は推定';
+  legend.innerHTML = '<i style="background:#1b7f4c"></i>90点以上 <i style="background:#8fbf3f"></i>70〜 <i style="background:#e6b422"></i>50〜 <i style="background:#c0504d"></i>〜50 ／ 破線＝ピン位置の周りに描いた推定形状 ／ 細線＝筆ポリゴン（参考）';
   $("map").appendChild(legend);
 
   function addDataLayers() {
     if (map.getSource("parcels")) return;
+    map.addSource("fude", { type: "geojson", data: fudeFC || emptyFC() });
+    map.addLayer({
+      id: "fude-line", type: "line", source: "fude", minzoom: 13,
+      layout: { visibility: el.showFude.checked ? "visible" : "none" },
+      paint: { "line-color": ["case", ["==", ["get", "t"], "100"], "#4a7fb5", "#8a6d3b"], "line-width": 0.8, "line-opacity": 0.6 },
+    });
     map.addSource("parcels", { type: "geojson", data: fc || emptyFC(), promoteId: "cid" });
     map.addSource("cities", { type: "geojson", data: cityPointsFC() });
     map.addLayer({
@@ -139,15 +146,22 @@
     else if (index.cities.length === 1) { el.city.value = index.cities[0].code; loadCity(el.city.value); }
   });
 
-  map.on("style.load", () => { if (index) { addDataLayers(); if (fc) map.getSource("parcels").setData(filtered()); } });
+  map.on("style.load", () => { if (index) { addDataLayers(); if (fc) map.getSource("parcels").setData(filtered()); if (fudeFC) map.getSource("fude").setData(fudeFC); } });
 
   // ---------------------------------------------------------------- データ読込・フィルタ
   async function loadCity(code) {
     safeSet("hokichi.city", code);
     activeId = null; el.detail.classList.add("hidden");
-    if (!code) { fc = null; refresh(); map.flyTo({ center: NARA_CENTER, zoom: 9.3 }); return; }
+    if (!code) { fc = null; fudeFC = null; if (map.getSource("fude")) map.getSource("fude").setData(emptyFC()); refresh(); map.flyTo({ center: NARA_CENTER, zoom: 9.3 }); return; }
     el.summary.innerHTML = "読込中…";
-    fc = await (await fetch(`data/${code}.geojson?v=${encodeURIComponent(index.generated || "")}`, { cache: "no-cache" })).json();
+    const v = encodeURIComponent(index.generated || "");
+    fc = await (await fetch(`data/${code}.geojson?v=${v}`, { cache: "no-cache" })).json();
+    const c0 = index.cities.find(x => x.code === code);
+    fudeFC = null;
+    if (c0 && c0.fude_context) {
+      try { fudeFC = await (await fetch(`data/${code}-fude.geojson?v=${v}`, { cache: "no-cache" })).json(); } catch { fudeFC = null; }
+    }
+    if (map.getSource("fude")) map.getSource("fude").setData(fudeFC || emptyFC());
     refresh();
     const c = index.cities.find(x => x.code === code);
     if (c && c.bbox) map.fitBounds([[c.bbox[0], c.bbox[1]], [c.bbox[2], c.bbox[3]]], { padding: 40, maxZoom: 14 });
@@ -228,7 +242,7 @@
         const row = document.createElement("div");
         row.className = "item" + (p.cid === activeId ? " active" : ""); row.dataset.cid = p.cid;
         row.innerHTML = `<span class="score" style="background:${scoreColor(p.score)}">${p.score}</span>
-          <span><b>${esc(p.parcel)}</b> <span class="meta">${esc(p.landuse || "-")} ${p.area_sqm ? Math.round(p.area_sqm) + "㎡" : ""}</span><br><span class="meta">${esc(p.intent || "意向未回答")}${p.matched ? "" : " ・形状推定"}</span></span>
+          <span><b>${esc(p.parcel)}</b> <span class="meta">${esc(p.landuse || "-")} ${p.area_sqm ? Math.round(p.area_sqm) + "㎡" : ""}</span><br><span class="meta">${esc(p.intent || "意向未回答")}${p.matched ? "" : " ・形状は推定"}</span></span>
           <span class="meta">${inCart(p.cid) ? "✓" : ""}</span>`;
         row.addEventListener("click", () => select(p.cid, true));
         d.appendChild(row);
@@ -260,7 +274,7 @@
         <dt>中間管理権</dt><dd>${esc(p.bank || "-")}</dd>
         <dt>団地</dt><dd>${esc(p.cluster_id)}：${p.cluster_size}筆 / ${(p.cluster_area / 100).toFixed(1)}a</dd>
         <dt>同じ所有者</dt><dd>${p.owner_group > 1 ? `遊休農地 ${p.owner_group}筆を同じ所有者が持つ（一度の交渉でまとまる可能性）` : "この筆のみ"}</dd>
-        <dt>区画形状</dt><dd>${p.matched ? "筆ポリゴンに一致" : "推定（点の周りの正方形）"}</dd>
+        <dt>区画形状</dt><dd>${p.match_kind === "within" ? "筆ポリゴンの中にピンがある" : p.match_kind === "near" ? `筆ポリゴンがピンから ${p.match_dist_m}m（近傍一致・参考）` : "筆ポリゴンなし。ピン位置の周りに面積相当の正方形を描画（荒廃地は衛星判読の区画に載らないことが多い）"}</dd>
       </dl>
       <p class="reasons">${(p.reasons || []).map(esc).join(" / ")}</p>
       <div class="row">
@@ -327,6 +341,7 @@
   el.minScore.addEventListener("input", () => { el.minScoreOut.textContent = el.minScore.value; refresh(); });
   [el.lendOnly, el.hideUnknown, el.landuse].forEach(x => x.addEventListener("change", refresh));
   el.basemap.addEventListener("change", () => map.setStyle(styleFor(el.basemap.value)));
+  el.showFude.addEventListener("change", () => map.getLayer("fude-line") && map.setLayoutProperty("fude-line", "visibility", el.showFude.checked ? "visible" : "none"));
   el.cartBtn.addEventListener("click", () => { renderCart(); el.letterOut.classList.add("hidden"); el.cart.classList.remove("hidden"); });
   el.cartClose.addEventListener("click", () => el.cart.classList.add("hidden"));
   el.cart.addEventListener("click", (e) => { if (e.target === el.cart) el.cart.classList.add("hidden"); });

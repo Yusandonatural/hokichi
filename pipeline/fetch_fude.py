@@ -95,7 +95,10 @@ def main():
         print(f"既存を使用: {zpath}", file=sys.stderr)
 
     with zipfile.ZipFile(zpath) as z:
-        names = [n for n in z.namelist() if n.lower().endswith((".fgb", ".geojson", ".json"))]
+        names = [n for n in z.namelist()
+                 if n.lower().endswith((".fgb", ".geojson", ".json"))
+                 and not os.path.basename(n).startswith("._")      # macOS の資源フォーク
+                 and "__MACOSX/" not in n]
         if not names:
             raise SystemExit(f"zip内に空間データが見当たらない: {z.namelist()[:10]}")
         for n in names:
