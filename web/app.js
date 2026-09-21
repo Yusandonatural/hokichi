@@ -240,6 +240,7 @@
         <dt>農振 / 都計</dt><dd>${esc(p.shinko || "-")} / ${esc(p.toshi || "-")}</dd>
         <dt>中間管理権</dt><dd>${esc(p.bank || "-")}</dd>
         <dt>団地</dt><dd>${esc(p.cluster_id)}：${p.cluster_size}筆 / ${(p.cluster_area / 100).toFixed(1)}a</dd>
+        <dt>同じ所有者</dt><dd>${p.owner_group > 1 ? `遊休農地 ${p.owner_group}筆を同じ所有者が持つ（一度の交渉でまとまる可能性）` : "この筆のみ"}</dd>
         <dt>区画形状</dt><dd>${p.matched ? "筆ポリゴンに一致" : "推定（点の周りの正方形）"}</dd>
       </dl>
       <p class="reasons">${(p.reasons || []).map(esc).join(" / ")}</p>

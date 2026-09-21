@@ -58,9 +58,9 @@ jobs:
       - name: 地図データをビルド（CSVが無ければサンプル）
         run: |
           src=data/emaff
-          if [ "$(ls data/emaff/*.csv 2>/dev/null | wc -l)" = "0" ]; then
+          if [ "$(ls data/emaff/*.csv data/emaff/*.geojson data/emaff/*.json 2>/dev/null | wc -l)" = "0" ]; then
             src=data/sample
-            echo "::warning::eMAFF CSV が無いのでサンプルデータでビルドします"
+            echo "::warning::eMAFF農地ナビのデータ（CSV/GeoJSON）が無いのでサンプルデータでビルドします"
           fi
           python3 pipeline/build_web_data.py --emaff "$src" --fude data/fude --config data/config.json --fude-year "$FUDE_YEAR" --out web/data
 

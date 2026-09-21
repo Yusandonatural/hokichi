@@ -44,6 +44,8 @@ COLUMN_HINTS = [
     ("bank",        ["農地中間管理権", "中間管理"]),
     ("right_type",  ["権利の種類", "権利種類"]),
     ("right_start", ["存続期間始期", "始期"]),
+    ("owner_hash",  ["所有者ハッシュ", "耕作者整理番号", "FarmerIndicationNumberHash"]),
+    ("daicho_id",   ["台帳ID", "DaichoId"]),
     ("lat",         ["緯度", "latitude", "lat", "Y座標"]),
     ("lon",         ["経度", "longitude", "lon", "lng", "X座標"]),
 ]
@@ -150,6 +152,7 @@ DEFAULT_CONFIG = {
         "bank_held": 12,        # 既に農地中間管理権が設定されている
         "owner_unknown": -8,    # 所有者不明（裁定ルートで可能だが長期化）
         "urban": -15,           # 市街化区域（転用圧力が高く長期利用に向かない）
+        "same_owner": 5,        # 同じ所有者ハッシュの筆が複数（一度の交渉でまとまる）
     },
     "vocab": {
         "idle": ["遊休", "荒廃", "低利用", "1号", "2号", "１号", "２号", "有"],
@@ -201,6 +204,9 @@ class Parcel:
     right_type: str = ""
     lat: float | None = None
     lon: float | None = None
+    owner_hash: str = ""     # 農地ナビの耕作者/所有者のハッシュ（個人は特定できない）
+    daicho_id: str = ""
+    owner_group: int = 1     # 同じハッシュを持つ筆の数（同じ相手と一度に交渉できる目安）
     cluster_id: str = ""
     cluster_size: int = 1
     cluster_area: float = 0.0
@@ -214,7 +220,8 @@ def build_parcels(rows, mapping, cfg):
     for row in rows:
         def get(fieldname):
             col = mapping.get(fieldname)
-            return (row.get(col) or "").strip() if col else ""
+            val = row.get(col) if col else None
+            return str(val).strip() if val not in (None, "") else ""
 
         place, main, branch, label = split_location(get("location"), get("parcel"))
         area = to_float(get("area"))
@@ -230,6 +237,7 @@ def build_parcels(rows, mapping, cfg):
             owner_known=get("owner_known"), bank=get("bank"),
             right_type=get("right_type"),
             lat=to_float(get("lat")), lon=to_float(get("lon")),
+            owner_hash=get("owner_hash"), daicho_id=get("daicho_id"),
         )
         codes = cfg["target"].get("city_codes") or []
         if codes and p.city_code and p.city_code not in [str(c) for c in codes]:
@@ -271,7 +279,12 @@ def cluster(parcels, gap):
 def score(parcels, cfg):
     w, v = cfg["weights"], cfg["vocab"]
     a = cfg["area"]
+    groups = defaultdict(int)
     for p in parcels:
+        if p.owner_hash:
+            groups[(p.city_code, p.owner_hash)] += 1
+    for p in parcels:
+        p.owner_group = groups.get((p.city_code, p.owner_hash), 1) if p.owner_hash else 1
         s, why = 0, []
         intent = " ".join([p.idle_intent, p.owner_intent])
 
@@ -302,6 +315,8 @@ def score(parcels, cfg):
             s += w["bank_held"]; why.append("農地中間管理権あり")
         if has_any(p.owner_known, v["owner_unknown"]):
             s += w["owner_unknown"]; why.append("所有者不明(裁定ルート要検討)")
+        if p.owner_group >= 2:
+            s += w.get("same_owner", 5); why.append(f"同じ所有者の筆が{p.owner_group}筆")
         p.score, p.reasons = s, why
     parcels.sort(key=lambda x: (-x.score, x.cluster_id, x.main or 0, x.branch or 0))
     for n, p in enumerate(parcels, 1):
@@ -314,7 +329,7 @@ def score(parcels, cfg):
 CAND_COLUMNS = ["cid", "score", "city_code", "city", "place", "parcel_label",
                 "landuse", "area_sqm", "shinko", "toshi", "idle", "survey_date",
                 "owner_intent", "idle_intent", "intent_date", "owner_known",
-                "bank", "right_type", "lat", "lon", "cluster_id",
+                "bank", "right_type", "lat", "lon", "owner_hash", "owner_group", "cluster_id",
                 "cluster_size", "cluster_area", "reasons"]
 
 
@@ -510,9 +525,15 @@ def load_override(path):
         return json.load(fh)
 
 
-def process_rows(rows, mapping, cfg):
-    """CSVの行 → 採点済み Parcel のリスト。CLI と pipeline/ の両方から使う。"""
+def process_rows(rows, mapping, cfg, keep=None):
+    """CSVの行 → 採点済み Parcel のリスト。CLI と pipeline/ の両方から使う。
+
+    keep を渡すと、団地化・採点の前にその条件で絞る（例: 遊休農地だけ）。
+    団地の筆数や同一所有者の筆数は、絞った後の集合で数える。
+    """
     parcels = build_parcels(rows, mapping, cfg)
+    if keep is not None:
+        parcels = [p for p in parcels if keep(p)]
     parcels = cluster(parcels, cfg["cluster_gap"])
     return score(parcels, cfg)
 

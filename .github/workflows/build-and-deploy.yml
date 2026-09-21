@@ -57,10 +57,10 @@ jobs:
       - name: eMAFF CSV の有無を確認
         id: emaff
         run: |
-          n=$(ls data/emaff/*.csv 2>/dev/null | wc -l)
+          n=$(ls data/emaff/*.csv data/emaff/*.geojson data/emaff/*.json 2>/dev/null | wc -l)
           echo "count=$n" >> "$GITHUB_OUTPUT"
           if [ "$n" = "0" ]; then
-            echo "::warning::data/emaff/ に eMAFF農地ナビのCSVがありません。サンプルデータでビルドします。"
+            echo "::warning::data/emaff/ に eMAFF農地ナビのデータ（CSV/GeoJSON）がありません。サンプルデータでビルドします。"
           fi
 
       - name: 地図データをビルド
